@@ -1,0 +1,434 @@
+---
+title: "Advanced Topics in Bayesian Data Analysis: Final Take-Home Exam"
+author: "Vedant Shah 987144"
+date: "20/07/2020"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    highlight: tango
+---
+
+### This project was done as my final submission in the course Bayesian Data Analytics and the code and intepretations were completely written by me
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, error = F, message = F, warning = F)
+
+```
+
+```{r libraries, include=FALSE, message=FALSE, warning=FALSE}
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package to visualize 
+library(bayesplot)
+
+# package to extract HDIs
+library(HDInterval)
+
+# these options help Stan run faster
+options(mc.cores = parallel::detectCores())
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# communication with Stan
+library(rstan)
+
+# and our dataset, let's call it dolphin
+dolphin <- aida::aidata
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+project_colors = c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#000000")
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
+# define scale function to avoid matrix object in tibble
+my_scale <- function(x) c(scale(x))
+
+```
+
+# Organizational stuff
+
+**Read all of the following carefully!**
+
+There are three exercises in this exam. Exercises 1 and 2 apply the basics of what you learned in this course in a (slightly) different setting. Acing these two exercises will guarantee passing and a decent grade. There is also a third exercise. This one is intentionally more difficult and covers entirely new territory. It is here where you can earn your stripes if your goal is to go for a top grade. Notice also that there are a few places where we suggest alternative solution strategies. If/where these are easier than the intended solution, we also state how many points you would lose by taking the easy-way-out. You will definitely pass this exam by taking all easy-ways-out if otherwise you work diligently and (almost) flawlessly. We therefore advice you to play strategically: better not try a handicap beyond your comfort level, since you might make mistakes ending up with fewer points than when you would have attempted something simpler.
+
+The exam is **due on Thursday, July 23rd, at 12am (midnight)**. 
+
+The rules for submitting are similar but not identical to those for previous homework assignments, so read carefully:
+
+- ‘knit’ the document to produce an HTML file.
+- include all Stan code in separate files and run all Stan models from these files; do not include Stan code in the Rmarkdown
+- do not suppress the code chunks in the HTML-Output
+- create a ZIP archive called “MATRIKELNR_Lastname_Firstname_ABDA_final.zip” containing:
+  - an R Markdown file “MATRIKELNR_Lastname_Firstname_ABDA_final.Rmd”
+  - a knitted HTML document “MATRIKELNR_Lastname_Firstname_ABDA_final.html”
+  - the data set used here as a CSV file
+  - **all of your Stan code files**
+  - a signed and scanned PDF of the "Declaration of proper conduct" (see below)
+- upload the ZIP archive on Stud.IP in the homework folder before the deadline. You may upload as many times as you like before the deadline, only your final submission will count.
+
+Additionally, a new rule applies: **Comment all of your code extensively in your own words!**
+
+While you are free to use all available resources (books, lecture materials, the internet) freely, please note that **it is not allowed to rely on help by other people**. <span style = "color:firebrick">**You have to do all of the work on this take-home exam entirely by yourself!**</span>
+
+Finally, please note that we will handle a very strict regiment in case of attempted fraud. Attempted fraud implies failure of this take-home exam, which in turn implies failure to pass this course. As this course will not be repeated in the future, there will be no chance for cheaters to repeat and harvest the fruits of their efforts. To make sure that you understand this, we ask you to read, sign, scan/photograph and include in your submission a "Declaration of proper conduct".
+
+# Preliminaries
+
+All of the following exercises are concerned with a new data set and some hypotheses regarding this data set, all of which will be introduced in this section on 'preliminaries'.
+
+## The data set
+
+Suppose a researcher team wants to know if manual response dynamics are affected by the phonological competition between two words during spoken word recognition. They ran the following experiment. On each trial, participants saw two objects in the top left and the top right corner of the screen, respectively. After clicking on the start button (located on the bottom of the screen), they heard an auditory prompt to click on one of the two objects. 
+
+There were two experimental `condition`-s. In one condition, the two objects were so-called phonological competitors (called the `cohort` condition), that is they started with the same sounds. For example, candy vs. candle. In this example, the disambiguating information comes late in the word, i.e. candy and candle sound very similar at the beginning of the word. These two words as response options basically compete against each other at the beginning of the audio recording. In a second condition (called the `control` condition), the two words did not start with the same sounds, like beaker vs. candle. The words are immediately disambiguated as soon as the listener hears the first sound of the word, thus not competing with each other for very long.
+
+Participants were instructed to initiate the audio recording and subsequently move their mouse toward the correct image as fast as possible. The team of researchers record 42 participants (`subject_nr`) reacting to 8 different `target` objects. They record participants' mouse trajectories and extract reaction times (RT) and area-under-the-curve (AUC) measures. Moreover, they run a clustering algorithm over all trajectories in order to see whether there are distinct movement strategies. The algorithm suggests three different clusters: straight, curved, and DCoM (= Discrete Change of Mind). If you want to look into a paper that discusses these clustering methods, see e.g. [this paper](https://link.springer.com/article/10.3758/s13428-019-01228-y). 
+
+The data set can be loaded as follows (assuming the file MT_dummy.csv is in the same folder as your script):
+
+```{r load_in_data}
+
+xdata <- read_csv("MT_dummy.csv")
+xdata
+```
+
+cluster~condition + (1| )
+
+
+## Code book
+
+Here is a list of variables in this data set with some explanations of what they represent:  
+
+variable    | description
+------------|-----------------------------------------------------------------
+`subject_id`      | unique identifier of individual participants (n = 42)  
+`unique_trial_id` | unique identifier for each trial  
+`trial`           | trial sequence for individual participants  
+`target`          | target picture (n = 8)  
+`condition`       | experimental condition (`cohort` vs. `control`)  
+`location`        | location of the target image (`right` vs. `left`)  
+`MAD`             | maximal absolute deviation  
+`AUC`             | area-under-the-curve measure  
+`RT`              | reaction time (RT)  
+`cluster`         | cluster categories (`straight` = straight line between start button and target; `curved` = gravitating toward the middle before curving toward the target; `dcom` = discrete change of mind, i.e. movement to the distractor first and then a late direction change toward the target)
+
+## The hypotheses
+
+The research group has the following research hypotheses which they want to test with Bayesian inference. 
+
+1. All else being equal, trajectories that are more curved (higher `AUC`) elicit longer reaction times (`RT`).
+2. All else being equal, trials in the `cohort` condition exhibit longer reaction times than trials in the `control` condition.
+3. All else being equal, trials displaying the target in the top `right` corner exhibit shorter `RT`s than trials displaying the target in the top `left` corner.
+4. The effect of `condition` on `RT` is stronger for `left` vs. `right` target `locations.`
+5. All else being equal, the likelihood of obtaining different `cluster` types depends on the experimental `condition.`
+
+
+## What you need to do
+
+Be the dedicated data scientist for the research team.
+
+# Exercise 1: Testing hypotheses with regression modeling [23 points]
+
+## 1a. Hypothesis-driven plotting [4 points]
+
+Create descriptive plots that help investigate visually whether hypothesis 1-4 might be true. Try to create as few highly informative plots as possible (e.g., like you woud in a thesis or resesarch paper where your readership's attention is a precious resource).
+
+```{r}
+# Using the facet grid to divide the graph based on the 2 categorical variables and assigned color to the location to make it a bit asethically pleasing. The Graph just shows the distribution of the data. 
+
+ggplot() + 
+  geom_point(data = xdata, 
+       aes(x = RT, y = AUC, color = location), position = position_dodge(width = 0.7), alpha = 1) + 
+  facet_grid(location~condition, scales= "free") 
+
+
+# Using the concept of descriptive statistics, just ploting the mean of the reaction time and plotting is against condition and the target location. Shows the basic difference in the reaction time based on the those to variables.   
+xdata %>% group_by(condition, location) %>% summarise(mean_rt = mean(RT)) %>%
+  ggplot() + 
+  geom_point(aes(x = condition, y = mean_rt, color = location), position = position_dodge(width = 0.7), alpha = 1, size = 4) 
+
+
+
+```
+
+## 1b. Regression modeling for hypothesis testing [10 points]
+
+Run appropriate (generalized) linear models in `brms` to test hypotheses 1-4. You may run up to four separate models (at -2 points subtraction). Or, preferably for a full score, run just one big model by means of which you address all hypotheses in one swoop.
+
+Irrespective of your approach, decide on whether each model you use should be hierarchical or not, and if so, which group-levels are reasonable to assume. Briefly justify your choices (hierarchical or not, if so which random effects).
+
+Specify priors as you see fit, briefly justify your choices for the priors, and critically evaluate the fit of your model. If the model fit is not satisfactory, i.e. the data is not appropriately modeled, suggest a solution.
+
+
+```{r}
+#Model Justification: Using 4 seperate model for 4 hypothesis. The first three models are non hierarchical model as the model does not have multiple levels or more than 1 dependent variable. The 4th model is an hirarchical model as we trying to check the effect of a varible on the independent variable while estimating the dependent variable. In this case checking the effect of condition on RT while taking in consideration of the location of the target.
+
+
+#Priors: We are using weak priors or it can also be called as agnostic priors. This is because the I would work with the belief that I have very less to no prior knowledge of the data. So the posterior estimation is majorly based on the likelihood and no influenced by the prior.
+
+xdata_scaled <- xdata %>% 
+  group_by(condition,location) %>% 
+  dplyr::summarize(AUC = mean(AUC, na.rm = TRUE),
+                   RT = mean(RT, na.rm = TRUE)) %>% 
+  mutate(log_RT = log(RT))
+
+xdata_scaled
+xdata_scaled$log_RT_s <- scale(xdata_scaled$log_RT, scale = TRUE)
+xdata_scaled
+
+
+prior1 <- c(
+   set_prior("normal(0, 2)", class = "b", coef = "AUC")
+)
+
+prior2 <- c(
+   set_prior("normal(0, 2)", class = "b", coef = "condition2")
+)
+
+prior3 <- c(
+   set_prior("normal(0, 2)", class = "b", coef = "location2"))
+
+priors4 <- c(set_prior("normal(0,2)", class = "sd", coef = "location"))
+
+hypo1 = brm(
+  log_RT_s ~ AUC, 
+  data = xdata_scaled,
+  iter = 2000,
+  chains = 4,
+  seed = 999, 
+  priors = prior1
+  )
+hypo1
+
+hypo2 = brm(
+  log_RT_s ~ condition, 
+  data = xdata_scaled,
+  iter = 2000,
+  chains = 4,
+  seed = 999,
+  priors = prior2
+  )
+
+hypo2
+
+hypo3 = brm(
+  log_RT_s ~ location, 
+  data = xdata_scaled,
+  iter = 2000,
+  chains = 4,
+  seed = 999,
+  priors = prior3
+  )
+hypo3
+
+priors4 <- c(set_prior("normal(0,3)", class = "sd"))
+
+hypo4 = brm(
+  log_RT_s ~ (condition|location), 
+  data = xdata_scaled,
+  iter = 2000,
+  chains = 4,
+  seed = 999,
+  priors = prior4, control = list(adapt_delta = 0.95)
+  )
+ranef(hypo4)
+```
+
+## 1c. Interpret & summarize the results [9 points]
+
+Evaluate the evidence for hypotheses 1-4 and write a couple of sentences to summarize your verdict for each hypothesis. Start by stating your criterion for assessing evidence for/against hypotheses in general (e.g., what are you even looking at to evaluate a hypothesis?).
+
+
+```{r}
+
+#Hypothesis 1: We are trying to assess the relation of the AUC value to the reaction time. With estimation of around -0.38 intercept and slope of 0.73. We can basically see that with every point change in AUC there will be an increase in 0.73 points in reaction time. Showing a positive relation between the variables.So we can conclude that the evidence found is in support (favour) of the hypothesis.
+
+#Hypothesis 2: Here we are trying the see the effect of the effect of the experimental condition (control and cohort) on the Reaction Time. With the estimation of around 0.7 and a slope of -1.2 from category cohart to control. The cohort condition indicates higher reaction time. Hence it supports the hypothese that cohort condition exibits longer RT than trials in the control condition. 
+
+
+#Hypothesis 3: We are assesing the affect of the location of the target with the Reaction time. With the intercept estimation of 0.24 and the slope towards location right being approximate -0.50, we understand that the Reaction time for the targets on the left is higher than the right. Hence, its in favour of the hypothesis that the target in the right corner has shorter RT than the trials where the target are in the top left corner
+  
+#Hypothesis 4: We are seeing the relation of experimental condition on RT with the effect of the location of the target. The intercept being at 0.34 the estimation in the cohort condition for the left is 0.1 and for the right target is -0.08. The estimation for the  control condition for the left is -0.4 and for the right target is -0.9. It is clearly seen, control condition affecting the Reaction Time is considered is stronger (-0.4 to -0.9, left vs right target). Also the effect of reaction time when the target is in the right is higher (-0.08 to -0.9, cohort vs control). This hypothesis is a bidirectional hypothesis so it can just be said that the the effect of condition on Rt is stronger in the left vs right target, especially in the control group. 
+``` 
+
+
+# Exercise 2: Comparing regression models [10 points]
+
+The researchers now want to explore their data even further. They are interested in the relationship between `RT` and `condition.` They want to compare, based on their own data, two different models, both of which have been used by different research groups for similar data before.  
+
+## 2a. Implement two regression models in Stan [4 points]
+
+Implement the following two regression models for the relationship `RT ~ condition` in Stan:
+
+1. Model 1 has:
+  - a normal link function
+  - a prior on `slope` with a mean of 100ms (note the units!), a 5% quantile at roughly 45ms and a 95% quantile at roughly 170ms
+    - HINT: use a `gamma` distribution with `shape = rate = x` set to a small integer value $x \le 10$; it would be good practice to use the`transformed parameters` block to scale appropriately (but using this block is not strictly necessary)
+    - alternative (for -0.5 points) specify a prior on `slope` with a mean of 100ms and a symmetric distribution around it
+2. Model 2 has:
+  - a Student's $t$ link function with 1 degree of freedom
+  - a Student's $t$ prior on `slope` with 1 degree of freedom, centered at zero and standard deviation of 1000
+
+Both models share the following ingredients:
+
+  - a prior on `sigma` that is weakly informed by the data at hand
+  - a prior on `intercept` that is centered at zero with a standard deviation of 1000
+
+Use the `generated quantities` block to retrieve a vector with the likelihoods of each data observation (for later use with LOO-CV).
+
+```{r}
+# number of observations
+N <- length(xdata$condition)
+
+#Converting the categories to 0 and 1 as numeric 
+x <- as.numeric(recode(xdata$condition, "control" = "0", "cohort" = "1"))
+
+#The putcome data is in y
+y <- xdata$RT
+
+data_set1 <- list(x = x, y = y, N = N)
+
+data_set1
+```
+
+```{stan, output.var="model1", eval = F}
+data {
+  int<lower=0> N;
+  vector[N] x;
+  vector[N] y;
+}
+parameters {
+  real intercept;
+  real slope;
+  real<lower=0> sigma;
+}
+model {
+ sigma ~ student_t(1,10,5);
+  intercept ~ student_t(1, 0, 30);
+  slope ~ student_t(1, 100, 10);
+  y ~ normal(intercept + slope * x, sigma);
+}
+generated quantities {
+  vector[N] log_lik;
+  for (i in 1:N) {
+    log_lik[i] = normal_lpdf(y[i] | intercept + slope * x[i], sigma);
+  }
+}
+```
+
+```{stan, output.var="model2", eval = F}
+data {
+  int<lower=0> N;
+  vector[N] x;
+  vector[N] y;
+}
+parameters {
+  real intercept;
+  real slope;
+  real<lower=0> sigma;
+  real<lower=0> nu;
+}
+model {
+  sigma ~ student_t(1,0,5);
+  intercept ~ student_t(1, 0, 1000);
+  slope ~ student_t(1, 0, 1000);
+  nu ~ normal(1, 5);
+  y ~ student_t(nu, intercept + slope * x, sigma);
+}
+generated quantities {
+  vector[N] log_lik;
+  for (i in 1:N) {
+    log_lik[i] = student_t_lpdf(y[i] | nu, intercept + slope * x[i], sigma);
+  }
+}
+```
+
+```{r}
+stan_fit_model1 <- stan(
+  file = 'model1.stan',
+  data = data_set1
+)
+
+
+stan_fit_model2 <- stan(
+  file = 'model2',
+  data = data_set1
+)
+
+
+
+```
+
+## 2b. Run & compare the models [2 points]
+
+Run both models and compare them using `loo_compare`. Establish whether any reported difference is significant. 
+
+
+```{r}
+
+normal <- loo(stan_fit_model1)
+student_t <- loo(stan_fit_model2)
+
+loo_comp <- loo_compare(list(model1 = normal, model2 = student_t))
+loo_comp
+
+```
+
+
+## 2c Interpret your results [4 points]
+
+The two models differ in two ways, the prior and the likelihood function. Given what you know about LOO-CV, which of these differences should contribute more to what you found in 2b? (Give 3-4 concise sentences.)
+
+
+```{r}
+
+# The model 2 is the better by ca. -20 points of expected log predictive density. LOO-CV compares models from the data informed method (leave one out cross validation), meaning it repeatedly computes from the posterior predicitve distribution. Therefore, LOO-CV is able to use this data which is not affect by wrong or uniformative priors. So the results we found is majority affected by the change in the likelihood function and not the change in the priors.
+
+```
+
+# Exercise 3: Multinomial regression [16 points]
+
+Hypothesis 5 refers to a multinomial measure (`cluster` = a categorical vector with more than two categories). We have not yet encountered generalized linear models with a multinomial response variable, but they can be easily modeled in `brms` using the "categorical" link function. Find a way to test hypothesis 5 using `brms`. If necessary, find relevant resources online. Alternatively, you might *not* run a multinomial regression, but use a workaround with what you already know (e.g., a different form of regression that you already learned in class). In that case, if you do it well you would not even necessarily incur a point deduction. However, we recommend and advice trying to implement a multinomial regression.
+
+## 3a. Run a multinomial regression [7 points]
+Run appropriate (generalized) linear models in `brms` to test hypothesis 5. Decide on whether the model should be hierarchical or not, and if so, which group-levels are reasonable to assume. Briefly justify your choices (hierarchical or not, if so which random effects). Specify priors as you see fit, justify your choices, and critically evaluate the fit of your model.
+
+
+```{r}
+#setting agnostic priors for class b. It is a non  hirerarchical model, because there are just 2 varibles involved and there is no multiple levels in the independent variable. Also as it a multinomial data we use the family categorical 
+ex_prior <- c(set_prior("normal(0,1)", class="b"))
+
+hypo4 = brm(
+  cluster ~ condition, 
+  family= "categorical", link="logit",
+  data = xdata,
+  iter = 2000,
+  chains = 4,
+  seed = 999,
+  priors = ex_prior
+  )
+
+```
+
+
+

@@ -1,0 +1,367 @@
+---
+title: "BDA: Exercises Week 2"
+author: "Vedant Shah 987144"
+date: "04/24/2020"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, eval = T, cache = FALSE, message = FALSE, warning = FALSE, error = FALSE, fig.width = 5, fig.align = "center")
+
+```
+
+```{r libraries}
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package to visualize 
+library(bayesplot)
+
+# these options help Stan run faster
+options(mc.cores = parallel::detectCores())
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+project_colors = c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#000000")
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
+```
+
+
+# Preliminaries
+
+You need an additional package for this week, which provides support for a particular distribution, namely the [(scaled) inverse-$\chi^2$ distribution](https://en.wikipedia.org/wiki/Scaled_inverse_chi-squared_distribution). Please install the package 'invgamma' once using `install.packages('invgamma')` and then load the package with:
+
+```{r}
+# you may have to install this one with:
+#install.packages('invgamma')
+
+library('invgamma')
+```
+
+
+
+# Motivation and learning goals
+
+This course is focused on computational methods of obtaining samples that represent probability distributions. The next couple of weeks will introduce algorithms and tools for obtaining suitable samples from various models and data. Before we can embark on this, we would like to recap some basics of Bayesian inference. For recap, we would like to look at some illuminating examples, but not too boring ones either. Finally, we also do not want to run ahead of ourselves and use sampling-based methods that we do not (yet / fully) understand. Given all these desiderate, here's what we will do:
+
+We will look at a case study (inferring mean and standard deviation of a single Gaussian) for which we can actually derive a closed form (a concrete mathematical formula expression) for the relevant Bayesian posterior (at least in non-normalized form). We then use this formula to obtain efficient samples from the Bayesian posterior. We can then work with these samples, obtained by conjugacy in a very fast and efficient way, to get familiar with sample-based approximations.
+
+So, the main **learning goals** of this week's practical part are:
+
+- get more practice with R, wrangling & plotting
+- recap basics of Bayesian inference, in particular:
+  - prior, likelihood, posterior
+  - uninformative, (weakly/strongly) informative & conjugate priors
+- understand the general practical appeal of sampling-based methods
+
+**Nota bene:** You are strongly encouraged to work through the derivation of the conjugate prior structure we use here (see additional material provided). But you do not have to understand these derivations, and certainly not every detail of it, to follow the course. 
+
+
+# <span style = "color:firebrick">Exercise 3 [HOMEWORK]:</span> Bayesian posterior inference with conjugate prior 
+
+We are now going to look at the model with conjugate priors, as described in the tutorial video. Below is a picture of that model. 
+
+```{r conjugate-prior-model}
+knitr::include_graphics("pics/inferring-gaussian-conjugate-prior-model.png")
+```
+
+With this prior structure, the posterior is of the form:
+
+$$
+\begin{align*}
+P(\mu, \sigma^2 \mid \mathbf{y})
+& = {\color{7F2615}{P(\sigma^2 | \mathbf{y})}} \ \ \  {\color{353585}{P(\mu \mid \sigma^2, \mathbf{y})}} & \text{with:} \\
+\sigma^2 \mid \mathbf{y} & \sim {\color{7F2615}{\mathrm{Inv}\text{-}\chi^2 \left({\color{3F9786}{\nu_1}},\ {\color{3F9786}{\sigma^2_1}} \right)}} \\
+\mu \mid \sigma^2, \mathbf{y} & \sim {\color{353585}{\mathrm{Normal} \left ({\color{3F9786}{\mu_1}}, \frac{\sigma}{\sqrt{\color{3F9786}{\kappa_1}}} \right)}} & \text{where:} \\
+{\color{3F9786}{\nu_1}} & = \nu_0 + n \\
+\nu_n{\color{3F9786}{\sigma_1^2}} & =  \nu_0 \sigma_0^2 + (n-1) s^2 + \frac{\kappa_0 \ n}{\kappa_0 + n} (\bar{y} - \mu_0)^2 \\
+{\color{3F9786}{\mu_1}} & = \frac{\kappa_0}{\kappa_0 + n} \mu_0 + \frac{n}{\kappa_0 + n} \bar{y} \\
+{\color{3F9786}{\kappa_1}} & = \kappa_0 + n
+\end{align*}
+$$
+
+### <span style = "color:firebrick">Exercise 3.a [HOMEWORK]:</span> Sample from the prior
+
+Here is a convenience function to sample from the 'normal inverse-$\chi^2$' prior. 
+
+```{r}
+sample_Norm_inv_chisq <-  function(
+  n_samples = 10000, 
+  nu = 1, 
+  var = 1, 
+  mu = 0, 
+  kappa = 1
+  ) 
+{
+  var_samples <- extraDistr::rinvchisq(
+    n   = n_samples, 
+    nu  = nu, 
+    tau = var
+  )
+  mu_samples <- map_dbl(
+    var_samples, 
+    function(s) rnorm(
+      n    = 1, 
+      mean = mu, 
+      sd   = sqrt(s/kappa)
+    )
+  )
+  tibble(
+    sigma = sqrt(var_samples),
+    mu    = mu_samples
+  )
+}
+```
+
+In the code below, we use this function to plot 10,000 samples from the prior with a particular set of parameter values. Notice the line `  filter(abs(value) <= 10)` which is useful for an informative plot (try commenting it out: what does that tell you about the range of values reasonably likely to get sampled?).
+
+```{r}
+library(extraDistr)
+# samples from the prior
+samples_prior_1 <- sample_Norm_inv_chisq(
+  nu = 1, 
+  var = 1, # a priori "variance of the variance"
+  mu = 0, 
+  kappa = 1
+)
+
+samples_prior_1 %>% 
+  pivot_longer(cols = everything(), names_to = "parameter", values_to = "value") %>% 
+  #filter(abs(value) <= 25) %>% 
+  ggplot(aes(x = value)) +
+  geom_density() + facet_grid(~parameter, scales = "free")
+```
+
+
+To get comfortable with this 'normal inverse-$\chi^2$' distribution, fill in the `XXX` in the following code box (possibly removing or altering parts of the plotting code if you need to) to find parameter values that encode a prior belief according to which credible values of $\sigma$ are not much bigger than (very roughly) 7.5, and credible values of $\mu$ lie (very roughly) in the range of 15 to 25. (Hint: intuit what the meaning of each parameter value is by a trial-error-think method.) The plot you generate could look roughly like the one below. 
+
+(Motivation for the exercise: you should get familiar with this distribution, and also realize that it is clunky and that you might want to use a different prior structure in order to encode specific beliefs ... which is exactly why we might want to be more flexible and go beyond conjugate priors in some cases.)
+
+```{r}
+# samples from the prior
+samples_prior_2 <- sample_Norm_inv_chisq(
+  nu    = 1, 
+  var   = 1/3,
+  mu    = 20,
+  kappa = 1
+)
+
+samples_prior_2 %>% 
+  pivot_longer(cols = everything(), names_to = "parameter", values_to = "value") %>% 
+  filter(!(parameter == "mu" & (value >= 25 | value <= 15))) %>% 
+  filter(!(parameter == "sigma" & value >= 7.5)) %>% 
+  ggplot(aes(x = value)) +
+  geom_density() + facet_grid(~parameter, scales = "free")
+```
+
+### <span style = "color:firebrick">Exercise 3.b [HOMEWORK]:</span> Get posterior estimates for different priors
+
+Here is a convenience function for obtaining posterior samples for the conjugate prior model, taking as input a specification of the prior beliefs.
+
+
+```{r}
+# fictitious data from height measurements (25 flowers of two species each in cm)
+
+heights_A <- c(6.94, 11.77, 8.97, 12.2, 8.48, 
+               9.29, 13.03, 13.58, 7.63, 11.47, 
+               10.24, 8.99, 8.29, 10.01, 9.47, 
+               9.92, 6.83, 11.6, 10.29, 10.7, 
+               11, 8.68, 11.71, 10.09, 9.7)
+
+heights_B <- c(11.45, 11.89, 13.35, 11.56, 13.78, 
+               12.12, 10.41, 11.99, 12.27, 13.43, 
+               10.91, 9.13, 9.25, 9.94, 13.5, 
+               11.26, 10.38, 13.78, 9.35, 11.67, 
+               11.32, 11.98, 12.92, 12.03, 12.02)
+```
+
+
+```{r}
+get_samples_single_normal_conjugate <- function(
+  data_vector, 
+  nu    = 1, 
+  var   = 1, 
+  mu    = 0, 
+  kappa = 1,
+  n_samples = 1000
+) 
+{
+  n <- length(data_vector)
+  sample_Norm_inv_chisq(
+    n_samples = n_samples,
+    nu        = nu + n, 
+    var       = (nu * var + (n-1)*var(data_vector) + (kappa * n)/ (kappa + n)) / (nu + n), 
+    mu        = kappa / (kappa + n) * mu + n / (kappa + n) * mean(data_vector), 
+    kappa     = kappa + n
+  )
+}
+```
+
+The code below calls this function to obtain samples from the posterior for two different models. Inspect the outcome in the final table and explain the difference in posterior inference of the variable `mu`. (Hint: plot the priors of model 3.)
+
+```{r}
+# posterior samples for prior 1
+
+post_samples_A_conjugate_1 <- get_samples_single_normal_conjugate(
+  heights_A, 
+  nu    = 1, 
+  var   = 1, 
+  mu    = 0, 
+  kappa = 1,
+  n_samples = 10000
+)
+
+# posterior samples for prior 3
+post_samples_A_conjugate_3 <- get_samples_single_normal_conjugate(
+  heights_A, 
+  nu    = 1, 
+  var   = 1/1000, 
+  mu    = 40, 
+  kappa = 10,
+  n_samples = 10000
+)
+
+summarize_sample_vector <- function(samples, name = '') {
+    tibble(
+      Parameter = name,
+      '|95%' = HDInterval::hdi(samples)[1],
+      mean  = mean(samples),
+      '95%|' = HDInterval::hdi(samples)[2]
+    )
+}
+rbind(
+  summarize_sample_vector(post_samples_A_conjugate_1$mu,    "mu") %>% mutate(model = 1),
+  summarize_sample_vector(post_samples_A_conjugate_1$sigma, "sigma") %>% mutate(model = 1),
+  summarize_sample_vector(post_samples_A_conjugate_3$mu,    "mu") %>% mutate(model = 3),
+  summarize_sample_vector(post_samples_A_conjugate_3$sigma, "sigma") %>% mutate(model = 3)
+)
+
+```
+
+
+```{r}
+post_samples_A_conjugate_3 %>% 
+  pivot_longer(cols = everything(), names_to = "parameter", values_to = "value") %>% 
+  ggplot(aes(x = value)) +
+  geom_density() + facet_grid(~parameter, scales = "free")
+```
+
+The density plot suggests that even the density distribution of the sigma for the given priors of both the models. However the mu plot shows that the density distribution of model 3 has much narrower distribution. Meaning that the variance of the data is lesser in model 3. 
+
+# <span style = "color:firebrick">Exercise 4 [HOMEWORK]:</span> Comparing group means
+
+### <span style = "color:firebrick">Exercise 4.a [HOMEWORK]:</span> Compare the posterior means of flowers A and B
+
+Let's face our research question: should we believe that flowers of type B are higher, on average, than flowers of type A? Use the (conjugate) prior of model 1 from above to also take 10,000 samples from the posterior when conditioning with the data in `heights_B`. Store the results in a vector called `post_samples_B_conjugate_1`.
+
+```{r}
+post_samples_B_conjugate_1 <- get_samples_single_normal_conjugate(
+  heights_B, 
+  nu    = 1, 
+  var   = 1, 
+  mu    = 0, 
+  kappa = 1,
+  n_samples = 10000
+)
+
+```
+
+### <span style = "color:firebrick">Exercise 4.b [HOMEWORK]:</span> Compare summaries of posterior samples
+
+Make a table like the one below that compares the summaries of the posterior samples for both data sets under the same model 1.
+
+```{r}
+knitr::include_graphics("pics/ex-4b.png")
+```
+
+```{r}
+rbind(
+  summarize_sample_vector(post_samples_A_conjugate_1$mu,    "mu") %>% mutate(Flower = "A"),
+  summarize_sample_vector(post_samples_A_conjugate_1$sigma, "sigma") %>% mutate(Flower = "A"),
+  summarize_sample_vector(post_samples_B_conjugate_1$mu,    "mu") %>% mutate(Flower = "B"),
+  summarize_sample_vector(post_samples_B_conjugate_1$sigma, "sigma") %>% mutate(Flower = "B")
+)
+```
+
+### <span style = "color:firebrick">Exercise 4.c [HOMEWORK]:</span> Interpret the results
+
+What would you conclude from this last table of results regarding our research question?
+
+
+
+```{r}
+#the mean height of the flower B is higher than the mean height for flower A. 
+```
+
+# <span style = "color:darkorange">Exercise 5 [BONUS]:</span> Posterior beliefs about the difference in means
+
+### <span style = "color:darkorange">Exercise 5.a [BONUS]:</span> Dealing with derived random variables in a sampling-based approach
+
+Given the samples at hand, how could you obtain a measure of the posterior beliefs in the difference between the means of flower types. Concretely, if $X_{\mu_A}$ ($X_{\mu_B}$) is the random variable describing the posterior beliefs about $A$ ($B$), can you derive any information about the derived random variable $\delta = X_{\mu_B} - X_{\mu_A}$? 
+
+
+Answer: We will be able to see the difference in the mean of the posterior beliefs of A and B and create a random variable delta
+
+
+### <span style = "color:darkorange">Exercise 5.b [BONUS]:</span> Quantifying our posterior belief in a large positive difference under model 1
+
+What is is our degree of belief in the event $\delta >= 1$, given the data and model 1?
+
+```{r}
+model1 <- post_samples_B_conjugate_1$mu - post_samples_A_conjugate_1$mu 
+length(model1[model1 >= 1])/length(model1)
+
+```
+
+### <span style = "color:darkorange">Exercise 5.c [BONUS]:</span> Quantifying our posterior belief in a large positive difference under model 3
+
+What is is our degree of belief in the event $\delta >= 1$, given the data and model 3?
+
+```{r}
+post_samples_B_conjugate_3 <- get_samples_single_normal_conjugate(
+  heights_B, 
+  nu    = 1, 
+  var   = 1/1000, 
+  mu    = 40, 
+  kappa = 10,
+  n_samples = 10000
+)
+
+model3 <- post_samples_B_conjugate_3$mu - post_samples_A_conjugate_3$mu 
+length(model3[model3 >= 1])/length(model3)
+
+```
+### <span style = "color:darkorange">Exercise 5.d [BONUS]:</span> Interpreting the results
+
+Explain the difference in results between model 1 and 3.
+
+The probabality that the model one can create higher difference in the mean. the probability the the delta will be >= 1 with model 3 is lesser than model 1. The conjugate priors with higher variance in model 1 is more likely to have samples with higher differences in model 1. The variance is lower in model 3 making the posterior mean difference less. 
+
+```{r}
+
+```

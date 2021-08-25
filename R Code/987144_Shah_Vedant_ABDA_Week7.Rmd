@@ -1,0 +1,189 @@
+---
+title: "EVEN more linear Regression with brms (Exercise)"
+author: "Vedant Shah 987144"
+date: "05/20/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r libraries, include=FALSE, message=FALSE, warning=FALSE}
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package to visualize 
+library(bayesplot)
+
+# these options help Stan run faster
+options(mc.cores = parallel::detectCores())
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# and our dataset, let's call it dolphin
+dolphin <- aida::aidata
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+project_colors = c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#000000")
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
+```
+
+
+## Exercise 2 *HOMEWORK*
+
+- If you need help, take a look at the suggested readings in the lecture, make use of the Forum, make use of the Forum, and also make use of the Forum.  
+- Use this exercise Rmd-file, solve the exercises marked as homework (this section here) and save the file with your student number and name in the ‘author’ heading.  
+- ‘Knit’ the document to produce a HTML file. If knitting fails, make use of the Forum ;)  
+- **Please do not suppress the code in the HTML-Output!**  
+- Create a ZIP archive called “MATRIKELNR_Lastname_Firstname_ABDA_Week3.zip” containing:  
+  - an R Markdown file “MATRIKELNR_Lastname_Firstname_ABDA_Week3.Rmd” and  
+  - a knitted HTML document “MATRIKELNR_Lastname_Firstname_ABDA_Week3.html”  
+- Upload the ZIP archive on Stud.IP in the homework folder before the deadline. You may upload as many times as you like before the deadline, only your final submission will count.
+
+I prepared an aggregated data frame `dolphin_agg2` for you. 
+
+```{r exercise2}
+
+# aggregate
+dolphin_agg2 <- dolphin %>% 
+  filter(correct == 1) %>% 
+  group_by(exemplar, group, condition) %>% 
+  dplyr::summarize(MAD = median(MAD, na.rm = TRUE),
+                   RT = median(RT, na.rm = TRUE)) %>% 
+  mutate(log_RT = log(RT))
+
+print(dolphin_agg2)
+```
+
+### (a) (10pts)
+
+Run a model predicting MAD based on *standardized* `log_RT`, `group`, `condition`, and *their three-way interaction*. Set a seed = 999.
+
+```{r exercise2a}
+# center log_RT
+dolphin_agg2$log_RT_s <- scale(dolphin_agg2$log_RT, scale = TRUE)
+dolphin_agg2
+# specify the model 
+model3 = brm(
+  # model formula
+  MAD ~ log_RT_s*group*condition, 
+  # data
+  data = dolphin_agg2,
+  iter = 2000,
+  chains = 4,
+  seed = 999
+  )
+
+summary(model3)
+```
+
+### (b) (20 pts)
+
+Look at the output. Extract posterior means and 95% CrIs for the following predictor level combinations. One row corresponds to one concrete combination of levels. (Tip: check your results by plotting them against the data)
+
+- Combination1: log_RT_s == 0; group == click; condition == Atypical
+- Combination2: log_RT_s == 0; group == touch; condition == Atypical
+- Combination3: log_RT_s == 1; group == touch; condition == Typical
+- Combination4: log_RT_s == 2; group == touch; condition == Atypical
+
+```{r exercise2b}
+posteriors1 <- model3 %>%
+  # Get posteriors of weights
+  spread_draws(b_Intercept,
+               b_log_RT_s, b_grouptouch, b_conditionTypical,
+               `b_log_RT_s:grouptouch`, `b_log_RT_s:conditionTypical`, `b_grouptouch:conditionTypical`,
+               `b_log_RT_s:grouptouch:conditionTypical`) %>% 
+  
+               mutate(comb1 = b_Intercept,
+         comb2 = b_Intercept + b_grouptouch*1,
+         comb3 = b_Intercept + b_log_RT_s*1 + b_grouptouch*1 + b_conditionTypical*1 + 
+           `b_log_RT_s:grouptouch`*1*1 + `b_log_RT_s:conditionTypical`*1*1 + `b_grouptouch:conditionTypical`*1*1 +
+           `b_log_RT_s:grouptouch:conditionTypical`*1*1*1,
+         comb4 = b_Intercept + b_log_RT_s*2 + b_grouptouch*1 +
+           `b_log_RT_s:grouptouch`*2*1) %>%
+   pivot_longer(cols = c(comb1,comb2,comb3,comb4), names_to = 'comb', values_to = 'estimates') %>% 
+  select('comb','estimates') %>% 
+  mutate('comb' = factor(comb)) %>%
+  group_by(comb) %>% 
+  summarise(mean = mean(estimates),
+            lower = HDInterval::hdi(estimates, credMass = 0.95)[1],
+            higher = HDInterval::hdi(estimates, credMass = 0.95)[2]) 
+
+posteriors1
+
+
+```
+
+### (c) (14 pts)
+
+Define the following priors and run the model3 again:
+
+- log_RT_s: student-t (df = 3, mean = 0, sd = 30)
+- grouptouch: student-t (df = 3, mean = 100, sd = 200)
+- conditionTypical: student-t (df = 3, mean = 0, sd = 200)
+- log_RT_s:grouptouch: normal (mean = 0, sd = 30)
+- log_RT_s:conditionTypical: normal (mean = 0, sd = 30)
+- grouptouch:conditionTypical:  student-t (df = 3, mean = 0, sd = 200)
+- log_RT_s:grouptouch:conditionTypical: student-t (df = 3, mean = 0, sd = 30)
+
+```{r exercise2c, cache=TRUE, message=FALSE, warning=FALSE}
+priors_model2_specific <- c(
+  set_prior("student_t(3,0,30)", class = "b", coef = "log_RT_s"),
+  set_prior("student_t(3,100,200)", class = "b", coef = "grouptouch"),
+  set_prior("student_t(3,0,200)", class = "b", coef = "conditionTypical"),
+  set_prior("normal(0,30)", class = "b", coef = "log_RT_s:grouptouch"),
+  set_prior("normal(0,30)", class = "b", coef = "log_RT_s:conditionTypical"),
+  set_prior("student_t(3,0,200)", class = "b", coef = "grouptouch:conditionTypical"),
+  set_prior("student_t(3,0,30)", class = "b", coef = "log_RT_s:grouptouch:conditionTypical")
+)
+
+model3b = brm(
+  # model formula
+  MAD ~ log_RT_s*group*condition, 
+  # data
+  data = dolphin_agg2,
+  iter = 2000,
+  chains = 4,
+  prior = priors_model2_specific
+  )
+
+
+summary(model3b)
+
+```
+
+### (d) (15 pts)
+
+Compare the two posterior estimates from model3 and model3b. What has changed?
+
+```{r exercise2d}
+
+#The posterior estimates are very similiar to the each other however the 95% crl is different. 
+#The interval for the model3b is much more smaller compared to that of the model3
+#this means that the priors are making the posterior estimation of the model3b more stronger. As they are informative priors its effects are specific and strong. So even if its not majorly changing the estimate, the posterior distribution is much more concentrated and smaller. 
+# the priors seems to not have an effect on the estimates. The reasons can be that the brm has a similiar prior set set when prior is not assigned. or the data is large enough for the priors to have limited effect. 
+
+```
+

@@ -1,0 +1,362 @@
+---
+title: "ADA (week 8) Introduction to Stan: Self-practice & homework exercises"
+author: "Vedant Shah"
+date: "06/06/2020"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+    highlight: tango
+---
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, cache = F, message = FALSE, warning = FALSE, error = FALSE, fig.width = 5, fig.align = "center")
+
+```
+
+```{r libraries, message = FALSE, warning = FALSE, include = FALSE}
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package to visualize 
+library(bayesplot)
+
+# package to communicate with Stan
+library(rstan)
+
+# these options help Stan run faster
+options(mc.cores = parallel::detectCores())
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+project_colors = c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#000000")
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
+```
+
+# Instructions
+
+- Use the file `08-exercises.Rmd`, solve the exercises marked as homework, and save the file with your student number and name.
+- ‘Knit’ the document to produce a HTML file.
+  - **include the other JS and CSS files that came with the ZIP file for this week in order to produce nicely looking Stan code in the HTML**
+- **include the Stan code you write in the Rmarkdow (see example in exercise 1 below), even if you also include a seperate file to run that model from**
+- Please do not suppress the code in the HTML-Output!
+  - **do suppress the output of Stan by including the flag `results = "hide"` in the r chunk calling the `stan`  function (see example in self-practice exercise 1)**
+- Create a ZIP archive called “MATRIKELNR_Lastname_Firstname_ABDA_Week4.zip” containing:
+  - an R Markdown file “MATRIKELNR_Lastname_Firstname_ABDA_Week4.Rmd”
+  - a knitted HTML document “MATRIKELNR_Lastname_Firstname_ABDA_Week4.html”
+  - **all of your Stan code files**
+  - **the auxilliary JS and CSS files for syntax highlighting of Stan code**
+- Upload the ZIP archive on Stud.IP in the homework folder before the deadline. You may upload as many times as you like before the deadline, only your final submission will count.
+
+# Preliminaries
+
+We need the package `rstan` installed and loaded for this week's exercises.
+
+We are going to set a seed, so that results from (pseudo-)random executions are repeatable. 
+
+```{r}
+set.seed(1969)
+```
+
+
+# Motivation and learning goals
+
+The main **learning goals** of this week's practical part are:
+
+- become familiar with Stan
+- see a simple and some increasingly more difficult models implemented in Stan
+- become comfortable with minor manipulations to Stan programs
+- understand robust (regression) modeling 
+
+
+# <span style = "color:firebrick">Exercise 2 [HOMEWORK]:</span> Outlier-robust inference
+
+Using Stan, we have full control over our model. To see a case where this is useful, let's consider **robust regression**. Remember that fitting a single Gaussian is like fitting an intercept-only linear regression model. So, what we do here applies to other regression models applied to metric data $y$, too. We are going to see that using a normal likelihood function makes our models very sensitive to outliers. To make them more robust against outliers we can change the likelihood function to using a [Student $t$ distribution](http://bois.caltech.edu/distribution_explorer/continuous/student_t.html), which has thicker tails.
+
+```{r}
+# flower height data (as before)
+heights_A <- c(6.94, 11.77, 8.97, 12.2, 8.48, 
+               9.29, 13.03, 13.58, 7.63, 11.47, 
+               10.24, 8.99, 8.29, 10.01, 9.47, 
+               9.92, 6.83, 11.6, 10.29, 10.7, 
+               11, 8.68, 11.71, 10.09, 9.7)
+# store the data in a vector with a better name & record its length
+y <- heights_A
+N <- length(y)
+```
+
+## 2.a Normal likelihood with outliers: what's the problem?
+
+Let's add two rather extreme outliers to our data of flower heights:
+
+```{r}
+y_prime = c(y, 90,95)
+```
+
+We assemble the new data set:
+
+```{r}
+dataList <- list(y = y_prime, N = length(y_prime))
+```
+
+And then we use the Stan model from Exercise 1.b which also collects posterior predictives:
+
+```{r, results="hide"}
+# fit the model to the data (we use the same code as for Ex-1b)
+fit_2a = stan(
+  file = 'ADA-W08-Ex1b-single-Gaussian-prior-postpred.stan',
+  data = dataList
+)
+```
+
+If we inspect the summary statistics of fitted values, we see that, perhaps unsurprisingly but sadly, the inferred mean has changed in response to inclusion of the outliers. 
+
+```{r}
+fit_2a
+```
+
+That might seem okay, but things are not looking good for this model. We see this if we look at a simple visual posterior predictive check:
+
+```{r}
+# extract samples from 'stanfit' object in a tidy format
+post_samples_2a <- tidybayes::tidy_draws(fit_2a)
+# plot posterior predictive samples against the original data
+post_samples_2a %>% ggplot(aes(x = yrep)) +
+  geom_density(color = project_colors[3], size = 2) +
+  geom_point(
+    data = tibble(yrep = y_prime, y = 0),
+    aes(y = y),
+    color = project_colors[1],
+    size = 2
+  ) +
+  xlab("observed & repeat data")
+```
+
+What's the problem? Why does this plot show that the model is not a good model for this data?
+
+```{r}
+
+# The Outliers are affecting the posterior estimated distribution. The estimation is not representing the data properly. The estimation must be around the data and should be about to handle the outliers.
+
+```
+
+## 2.b Using a Student $t$-distribution
+
+Complete the Stan code in the code box below, so that it uses a Student $t$ distribution with one degree of freedom. Check out the syntax in the [Stan function reference](https://mc-stan.org/docs/2_18/functions-reference/student-t-distribution.html). Run the model, store the result in a variable called `fit_2b` and show a summary of that `stanfit` object. Look at the mean estimate of the mean and comment on whether it is reasonable or not. (Is it a better estimate than in Ex-2a?) Then plot the posterior predictive alongside the data, reusing the code from Ex-2a. Again comment on whether the result is any better than before. 
+
+```{stan, output.var="model-2b", eval = F}
+data {
+  int<lower=1> N ;
+  vector[N] y ;
+}
+parameters {
+  real mu ;
+  real<lower =0> sigma ;
+  real nu ;
+} 
+model {
+  // priors for parameters
+  mu ~ normal(0,100);
+  sigma ~ cauchy(0,10);
+  y ~ student_t(nu, mu, sigma);
+}
+generated quantities {
+  // samples from the posterior predictive distribution
+  // notice that, given the code above, mu and sigma are constraint to
+  // be samples from the posterior at run time
+  real yrep ; 
+  yrep = student_t_rng(1, mu, sigma);
+  
+}
+```
+
+
+```{r}
+dataList = list(y = y, N = N)
+```
+
+
+```{r}
+fit_2b = rstan::stan(
+  file = 'ADA-W08-Ex2b-Student_t.stan',
+  data = dataList
+)  
+summary(fit_2b)
+```
+
+```{r}
+# extract samples from 'stanfit' object in a tidy format
+post_samples_2b <- tidybayes::tidy_draws(fit_2b)
+# plot posterior predictive samples against the original data
+post_samples_2b %>% ggplot(aes(x = yrep)) +
+  geom_density(color = project_colors[3], size = 2) +
+  geom_point(
+    data = tibble(yrep = y, y=0),
+    aes(y = y),
+    color = project_colors[1],
+    size = 2
+  ) +
+  xlab("observed & repeat data") + xlim(0,20)
+
+# The second model with student_t_rng is a better model as it is not majorly affected by the outliers. The posterior estimation is a better representation of the data as it covers the spread of the data better
+```
+
+# <span style = "color:firebrick">Exercise 3 [HOMEWORK]:</span> Comparing the means of two groups
+
+We are now going to look at the two measures of flower heights from before and we are going to infer credible values for the difference between means directly in Stan. We are going to practice supplying the data in differet ways to Stan.
+
+## 3.a Individual vectors
+
+Here's the data for inference stored in two different vectors:
+
+```{r}
+heights_A <- c(6.94, 11.77, 8.97, 12.2, 8.48, 
+               9.29, 13.03, 13.58, 7.63, 11.47, 
+               10.24, 8.99, 8.29, 10.01, 9.47, 
+               9.92, 6.83, 11.6, 10.29, 10.7, 
+               11, 8.68, 11.71, 10.09, 9.7)
+
+heights_B <- c(11.45, 11.89, 13.35, 11.56, 13.78, 
+               12.12, 10.41, 11.99, 12.27, 13.43, 
+               10.91, 9.13, 9.25, 9.94, 13.5, 
+               11.26, 10.38, 13.78, 9.35, 11.67, 
+               11.32, 11.98, 12.92, 12.03)
+```
+
+Notice that in earlier exercises `heights_B` had one more measurement. This is omitted here on purpose.
+
+We are going to supply this data as two separate vectors to Stan, like so:
+
+```{r}
+data_list_3a <- list(
+  y1 = heights_A,
+  N1 = length(heights_A),
+  y2 = heights_B,
+  N2 = length(heights_B)
+)
+```
+
+Use the model from Section 1.b above to implement inference of two Gaussians in parallel. Concretely, use the same priors as in 1.b, but omit the posterior predictive part. Use the `generated quantities` block to directly obtain samples from the derived quantity `delta = mu2 - mu1`. Run the model, capture the results in variable `fit_3a`, produce a summary statistic for that `stanfit` objectand interpret the summary statistics for `delta` regarding the question of whether the means of these groups are different.
+
+```{stan output.var="ex-3a",eval=F}
+data {
+  int<lower=1> N1 ;
+  vector[N1] y1 ;
+  int<lower=1> N2 ;
+  vector[N2] y2 ;
+}
+parameters {
+  real mu1 ;
+  real<lower =0> sigma1;
+  real mu2 ;
+  real<lower =0> sigma2;
+} 
+model {
+  // priors for parameters
+  mu1 ~ normal(0,100);
+  sigma1 ~ cauchy(0,10);
+  y1 ~ normal(mu1, sigma1) ;
+  mu2 ~ normal(0,100);
+  sigma2 ~ cauchy(0,10);
+  y2 ~ normal(mu2, sigma2) ;
+}
+generated quantities {
+real delta;
+delta = mu2 - mu1;
+}
+```
+
+```{r}
+dataList2 <- list(y1 = data_list_3a$y1, y2 = data_list_3a$y2, N1 = data_list_3a$N1, N2 = data_list_3a$N2)
+```
+
+
+```{r}
+fit_3a = stan(
+  file = 'ADA-W08-Ex3a.stan',
+  data = dataList2)
+summary(fit_3a)
+
+# the delta value indicates a difference in the both the data set. Even the difference in the credible interval is higher. So it can be easily said that there is a difference in the mean.
+
+```
+
+
+
+## 3.b A scrambled tibble
+
+Use the second technique described in the section "Passing ragged arrays to Stan" in Lambert's book (page 387) to implement the very same model as in 3.a but when data is supplied like this (notice that this is a random permutation of your data, using `slice`): 
+
+```{r}
+data_tibble_3b <- tibble(
+  group = c(rep(1, length(heights_A)), rep(2, length(heights_B))),
+  y = c(heights_A, heights_B)
+) %>% 
+  # permute the rows
+  slice(sample(1:n()))
+data_list_3b <-  as.list(data_tibble_3b)
+data_list_3b[["N"]] <- length(data_list_3b$y)
+data_list_3b[["K"]] <- 2 # number of groups
+data_list_3b
+```
+
+```{stan output.var="Ex-3b", eval = F}
+data{
+  int N ; // number of samples
+  int K ; // number of groups
+  real y[N] ; // heights of all samples
+  int groups[N] ; // indicator of the name of the group
+}
+
+parameters {
+   real mu[K];
+   real <lower=0> sigma[K];
+}
+
+model {
+   for (i in 1:N){
+   y[i] ~ normal(mu[groups[i]], sigma[groups[i]]);
+}
+mu ~ normal(0,100);
+sigma ~ cauchy(0,10);
+}
+```
+```{r}
+dataList3 = list(N = data_list_3b$N, y = data_list_3b$y, K = data_list_3b$K, groups = data_list_3b$group)
+```
+
+
+```{r}
+fit_3b <- stan(file = 'ADA-W08-Ex3b.stan', data = dataList3)
+fit_3b
+```
+
+
+The motivation for this is that you should know about this kind of 'index-juggling' in Stan and similar probabilistic modeling languages. Yes, you can often prevent this, but you should also be able to follow others' code, so we do this at least once in a clumsy way. (Sorry!)
+
+So, concretely, reimplement the model from Ex-3a using Lambert's second technique, run the model, capture the results in variable `fit_3b` and show a summary statistic, just to check that the results are similar.
+
+
+

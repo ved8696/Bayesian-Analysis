@@ -1,0 +1,259 @@
+---
+title: "Simple Regression with brms (Exercise)"
+author: "Vedant Shah 987144"
+date: "04/20/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r libraries, message = FALSE, warning = FALSE, include = FALSE}
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package to visualize 
+library(bayesplot)
+
+# these options help Stan run faster
+options(mc.cores = parallel::detectCores())
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# and our dataset, let's call it dolphin
+dolphin <- aida::aidata
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+project_colors = c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#000000")
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
+```
+
+## Exercise 2 *HOMEWORK*
+
+- If you need help, take a look at the suggested readings in the lecture, make use of the Forum, make use of the Forum, and also make use of the Forum.  
+- Use this exercise Rmd-file, solve the exercises marked as homework (this section here) and save the file with your student number and name in the ‘author’ heading.  
+- ‘Knit’ the document to produce a HTML file. If knitting fails, make use of the Forum ;)  
+- **Please do not suppress the code in the HTML-Output!**  
+- Create a ZIP archive called “MATRIKELNR_Lastname_Firstname_ABDA_Week3.zip” containing:  
+  - an R Markdown file “MATRIKELNR_Lastname_Firstname_ABDA_Week3.Rmd” and  
+  - a knitted HTML document “MATRIKELNR_Lastname_Firstname_ABDA_Week3.html”  
+- Upload the ZIP archive on Stud.IP in the homework folder before the deadline. You may upload as many times as you like before the deadline, only your final submission will count.
+
+
+I prepared an aggregated data frame `dolphin_agg2` for you. 
+
+```{r exercise2, cache = TRUE}
+
+# make correct a factor
+dolphin$correct <- as.factor(dolphin$correct)
+
+# aggregate
+dolphin_agg2 <- dolphin %>% 
+  group_by(exemplar, group, condition, correct) %>% 
+  dplyr::summarize(MAD = median(MAD, na.rm = TRUE)) 
+
+
+```
+
+(a) Plot the data (for all combinations of `group`, `condition`, and `correct`) as a point plot. Use `facet_grid` and dodged positions to separate the categories.
+
+```{r exercise2a}
+ggplot() + 
+  geom_point(data = dolphin_agg2, 
+       aes(x = condition, y = MAD,
+           color = condition, fill = condition), position = position_dodge(width = 0.7), size = 4, alpha = 1) + 
+  facet_grid(correct~group, scales= "free") 
+
+```
+
+(b) Run a linear model with `brm` with the dependent variable `MAD` and the independent variables `group`, `condition`, `correct` and an 2-way interaction term for `group x condition`. Run 4 chains, and 2000 iteration per chain. Use `seed = 991`. 
+
+
+```{r exercise2b, cache = TRUE}
+model = brm(
+  # model formula
+  MAD ~ (condition * group) + correct, 
+  # data
+  data = dolphin_agg2,
+  seed = 991,
+  iter   = 2000, 
+  chains = 4
+  )
+
+summary(model)
+
+```
+
+(c) Interpret the output by looking at the coefficients. What does the Intercept concretely represent? 
+
+```{r exercise2c}
+
+# intercept usually shows the point where the line starts based on the reference level. 
+# reference level here seems to be atypical click category. The intercept also is in reference with correct = 0 
+# correct1 gives the intercept difference from correct = 0 to correct = 1 
+
+```
+
+(d) Extract the posterior means and their 95% CrIs for all combination of predictors (correct x condition x group) and plot them as a point plot with the 95% CrIs as error bars.
+
+```{r exercise2d}
+
+posteriors1 <- model %>%
+  spread_draws(b_Intercept, 
+               b_conditionTypical,
+               b_grouptouch, b_correct1, `b_conditionTypical:grouptouch`) %>%
+  # calculate posteriors for each individual level
+  mutate(Atypical_click0 = b_Intercept,
+         Typical_click0 = b_Intercept + b_conditionTypical,
+         Atypical_touch0 = b_Intercept + b_grouptouch,
+         Typical_touch0 = b_Intercept + b_conditionTypical + b_grouptouch + `b_conditionTypical:grouptouch`,
+         Atypical_click1 = b_Intercept + b_correct1,
+         Typical_click1 = b_Intercept + b_correct1 + b_conditionTypical,
+         Atypical_touch1 = b_Intercept + b_correct1 + b_grouptouch,
+         Typical_touch1 = b_Intercept + b_correct1 + b_conditionTypical + b_grouptouch + `b_conditionTypical:grouptouch`) %>% 
+  select(Atypical_click0, Typical_click0, 
+         Atypical_touch0, Typical_touch0,
+         Atypical_click1, Typical_click1, 
+         Atypical_touch1, Typical_touch1) %>% 
+  gather(key = "parameter", value = "posterior") %>% 
+  mutate(group = ifelse(parameter == "Atypical_click0" | parameter == "Typical_click0" | parameter  == "Atypical_click1"| parameter == "Typical_click1",
+                        "click", "touch"),
+         condition = ifelse(parameter == "Atypical_click0"| parameter == "Atypical_touch0" |parameter == "Atypical_click1"| parameter == "Atypical_touch1",
+                        "Atypical", "Typical"),
+         correct = ifelse(parameter == "Atypical_click0"|parameter == "Atypical_touch0"|parameter == "Typical_click0"| parameter == "Typical_touch0",
+                        "0", "1")) 
+
+posteriors1_agg
+posteriors1_agg <- posteriors1 %>% 
+  group_by(group, condition, correct) %>% 
+  summarise(mean_posterior = mean(posterior),
+            `95lowerCrI` = HDInterval::hdi(posterior, credMass = 0.95)[1],
+            `95higherCrI` = HDInterval::hdi(posterior, credMass = 0.95)[2])
+
+
+ggplot(data = posteriors1_agg, 
+       aes(x = condition, y = mean_posterior,
+           color = condition, fill = condition), position = position_dodge(width = 0.5)) + 
+  geom_errorbar(aes(ymin = `95lowerCrI`, ymax = `95higherCrI`),
+                width = 0.2) +
+  geom_point( alpha = 1, size = 4) +
+  facet_grid(correct~group, scale = "free")
+````
+
+(e) Create a point plot that plots the data against the posterior means and 95% CrIs.
+
+```{r exercise2e_plot}
+
+
+
+
+ggplot(data = posteriors1_agg, 
+       aes(x = condition, y = mean_posterior,
+           color = condition, fill = condition), position = position_dodge(width = 0.5)) + 
+  geom_errorbar(aes(ymin = `95lowerCrI`, ymax = `95higherCrI`),
+                width = 0.2) +
+  geom_line(aes(group = group), color = "grey") +
+  geom_point(size = 4) +
+  geom_point(data = dolphin_agg2,  aes(x = condition, y = MAD), alpha = 0.3, size = 2) +
+  facet_grid(correct~group, scale = "free")
+
+```
+
+Bonus: (f) run the model with a three-way interaction `group x condition x correct`. Extract the posteriors for each individual combination of predictor levels and plot them against the data as in 2d.
+
+```{r exercise2f_model}
+
+model3 = brm(
+  # model formula
+  MAD ~ condition * group * correct, 
+  # data
+  data = dolphin_agg2,
+  seed = 991,
+  iter   = 2000, 
+  chains = 4
+  )
+
+summary(model3)
+
+```
+
+
+```{r exercise2f_plot}
+posteriors3 <- model3 %>%
+  spread_draws(b_Intercept, 
+               b_conditionTypical,
+               b_grouptouch, b_correct1, `b_conditionTypical:grouptouch`, `b_conditionTypical:correct1`, `b_grouptouch:correct1`, `b_conditionTypical:grouptouch:correct1`) %>%
+  # calculate posteriors for each individual level
+  mutate(Atypical_click0 = b_Intercept,
+         Typical_click0 = b_Intercept + b_conditionTypical,
+         Atypical_touch0 = b_Intercept + b_grouptouch,
+         Typical_touch0 = b_Intercept + b_conditionTypical + b_grouptouch + `b_conditionTypical:grouptouch`,
+         Atypical_click1 = b_Intercept + b_correct1,
+         Typical_click1 = b_Intercept + b_correct1 + b_conditionTypical + `b_conditionTypical:correct1`,
+         Atypical_touch1 = b_Intercept + b_correct1 + b_grouptouch + `b_grouptouch:correct1` ,
+         Typical_touch1 = b_Intercept + b_correct1 + b_conditionTypical + b_grouptouch + `b_conditionTypical:correct1` + `b_grouptouch:correct1` + `b_conditionTypical:grouptouch:correct1`+ `b_conditionTypical:grouptouch`) %>% 
+  select(Atypical_click0, Typical_click0, 
+         Atypical_touch0, Typical_touch0,
+         Atypical_click1, Typical_click1, 
+         Atypical_touch1, Typical_touch1) %>% 
+  gather(key = "parameter", value = "posterior") %>% mutate(group = ifelse(parameter == "Atypical_click0" | parameter == "Typical_click0" | parameter  == "Atypical_click1"| parameter == "Typical_click1",
+                        "click", "touch"),
+         condition = ifelse(parameter == "Atypical_click0"| parameter == "Atypical_touch0" |parameter == "Atypical_click1"| parameter == "Atypical_touch1",
+                        "Atypical", "Typical"),
+         correct = ifelse(parameter == "Atypical_click0"|parameter == "Atypical_touch0"|parameter == "Typical_click0"| parameter == "Typical_touch0",
+                        "0", "1")) 
+
+
+posteriors3_agg <- posteriors3 %>% 
+  group_by(group, condition, correct) %>% 
+  summarise(mean_posterior = mean(posterior),
+            `95lowerCrI` = HDInterval::hdi(posterior, credMass = 0.95)[1],
+            `95higherCrI` = HDInterval::hdi(posterior, credMass = 0.95)[2])
+
+
+ggplot(data = posteriors3_agg, 
+       aes(x = condition, y = mean_posterior,
+           color = condition, fill = condition), position = position_dodge(width = 0.5)) + 
+  geom_errorbar(aes(ymin = `95lowerCrI`, ymax = `95higherCrI`),
+                width = 0.2) +
+  geom_line(aes(group = group), color = "grey") +
+  geom_point(size = 4) +
+  geom_point(data = dolphin_agg2,  aes(x = condition, y = MAD), alpha = 0.3, size = 2) +
+  facet_grid(correct~group, scale = "free")
+
+
+```
+
+
+
+```{r}
+
+
+
+
+
+
+```
+

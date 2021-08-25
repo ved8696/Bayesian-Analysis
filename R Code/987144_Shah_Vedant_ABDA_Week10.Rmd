@@ -1,0 +1,234 @@
+---
+title: "Generalized Linear Regression with `brms`"
+author: "Vedant Shah"
+date: "20/06/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r libraries, include=FALSE, message=FALSE, warning=FALSE}
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package to visualize 
+library(bayesplot)
+
+# these options help Stan run faster
+options(mc.cores = parallel::detectCores())
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# and our dataset, let's call it dolphin
+dolphin <- aida::aidata
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+project_colors = c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#000000")
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
+```
+
+Use the following data frame:
+
+```{r exercise1}
+
+# set up data frame
+dolphin_agg <- dolphin %>% 
+  filter(correct == 1) %>% 
+  mutate(straight = as.factor(ifelse(prototype_label == "straight", 1, 0)),
+         log_RT_s = scale(log(RT)))
+dolphin_agg
+```
+
+
+
+## Exercise 2 *HOMEWORK*
+
+- If you need help, take a look at the suggested readings in the lecture, make use of the Forum, make use of the Forum, and also make use of the Forum.  
+- Use this exercise Rmd-file, solve the exercises marked as homework (this section here) and save the file with your student number and name in the ‘author’ heading.  
+- ‘Knit’ the document to produce a HTML file. If knitting fails, make use of the Forum ;)  
+- **Please do not suppress the code in the HTML-Output!**  
+- Create a ZIP archive called “MATRIKELNR_Lastname_Firstname_ABDA_Week10.zip” containing:  
+  - an R Markdown file “MATRIKELNR_Lastname_Firstname_ABDA_Week10.Rmd” and  
+  - a knitted HTML document “MATRIKELNR_Lastname_Firstname_ABDA_Week10.html”  
+- Upload the ZIP archive on Stud.IP in the homework folder before the deadline. You may upload as many times as you like before the deadline, only your final submission will count.
+
+
+### (a) (10 points)
+We will continue to use `dolphin_agg` in this exercise.
+Plot the relationship between `xpos_flips` and `log_RT_s` in a scatterplot and visually differentiate between `condition`s as you see fit.
+
+```{r exercise2a}
+ggplot(data = dolphin_agg) +
+  geom_point(aes(x = log_RT_s, y = xpos_flips, colour = condition), 
+             # we add a little bit of jitter to make the points better visible
+             position = position_jitter(height = 0.2), alpha = 0.2) +
+  ylim(-1,8) +
+  xlim(-3,7) 
+```
+
+### (b) (10 points)
+Run an appropriate generalized regression model for xflips with `brms` to predict `xpos_flips` based on `log_RT_s`, `condition`, and their two-way interaction.
+
+```{r exercise2b}
+model1 <- brm(xpos_flips ~ log_RT_s*condition, 
+                 dolphin_agg, cores = 4,
+              family = "poisson")
+model1 
+```
+
+### (c) (25 points)
+
+Extract the posterior means and 95% CrIs across a range of representative values of log_RT_s (see walkthrough) for both conditions and plot them against the data (as done before in walkthrough and exercise 1).
+
+```{r exercise2c}
+predicted_values <- model1 %>%
+  spread_draws(b_Intercept, b_log_RT_s, b_conditionTypical, `b_log_RT_s:conditionTypical`) %>%
+  # make a list of relevant value range of logRT
+  mutate(log_RT = list(seq(-3, 5, 0.2))) %>% 
+  unnest(log_RT) %>%
+  # transform into proportion space
+  mutate(pred_Atypical = exp(b_Intercept + b_log_RT_s * log_RT),
+         pred_Typical = exp(b_Intercept + b_log_RT_s * log_RT +
+                               b_conditionTypical + `b_log_RT_s:conditionTypical` * log_RT)
+         ) %>%
+  group_by(log_RT) %>%
+  summarise(Atypical_mean = mean(pred_Atypical, na.rm = TRUE),
+            Atypical_low = quantile(pred_Atypical, prob = 0.025),
+            Atypical_high = quantile(pred_Atypical, prob = 0.975),
+            Typical_mean = mean(pred_Typical, na.rm = TRUE),
+            Typical_low = quantile(pred_Typical, prob = 0.025),
+            Typical_high = quantile(pred_Typical, prob = 0.975)
+            )
+
+predicted_values
+
+ggplot(data = predicted_values) +
+  geom_point(data = dolphin_agg,
+             aes(x = log_RT_s, y = xpos_flips, color = condition), 
+             position = position_jitter(height = 0.02), alpha = 0.2) +
+  geom_ribbon(aes(x = log_RT, ymin = Atypical_low, ymax = Atypical_high), alpha = 0.2) +
+  geom_ribbon(aes(x = log_RT, ymin = Typical_low, ymax = Typical_high), alpha = 0.2) +
+  geom_line(aes(x = log_RT, y = Atypical_mean), color = "#E69F00", size = 2) +
+  geom_line(aes(x = log_RT, y = Typical_mean), color = "#56B4E9", size = 2) +
+  ylab("Predicted prob of straight trajectory") 
+```
+
+### Bonus 
+Binary logistic regression assumes that the outcome variable comes from a Bernoulli distribution which is a special case of a binomial distribution where the number of trial $n = 1$ and thus the outcome variable can only be 1 or 0. In contrast, binomial logistic regression assumes that the number of the target events follows a binomial distribution with $n$ trials and probability $q$. Read up on Binomial data with `brms` here: https://www.rensvandeschoot.com/tutorials/generalised-linear-models-with-brms/
+
+Take the following subset of the `dolphin` data frame that only contains `correct` responses (= `1`). 
+
+```{r}
+
+# set up data frame
+dolphin_sub <- dolphin %>%
+  filter(correct == 1) %>% 
+  mutate(straight = (ifelse(prototype_label == "straight", 1, 0)),
+         log_RT_s = scale(log(RT)))
+dolphin_sub
+```
+
+### Bonus (a)
+
+For each `subject_id` in each `group`, aggregate the mean log_RT_s, the number of trials that are classified as `straight` trajectories, and the total number of trials. Plot the proportion of trials that are classified as `straight` (vs. all trials) trajectories for each subject.
+
+```{r bonusA}
+mean_log <- dolphin_sub %>% group_by(subject_id, group) %>% summarise(mean_log = mean(log_RT_s), total_trials = n()) 
+count <- dolphin_sub %>% group_by(subject_id, group) %>% filter(straight == 1) %>% summarise(straight_trials = n()) 
+data <- full_join(mean_log, count, by = c("subject_id", "group"))
+#data <- data %>% mutate(prop = straight_trials/total_trials)
+data
+
+ggplot(data) + 
+    geom_line(aes(y=straight_trials/total_trials, x=subject_id), colour = "darkred") + geom_line(aes(y=straight_trials, x=subject_id), colour = "steelblue") + geom_line(aes(y=total_trials, x=subject_id), colour = "black") + scale_color_manual(name = "Labels", labels = c("darkred"= "Proportion", "steelblue"="Total Straight","black"= "Total Trajectories")) 
+
+
+
+  
+```
+
+### Bonus (b)
+
+Formulate a binomial logistic regression model to predict the proportion of straight trajectories based on `log_RT_s`, `group`, and their two-way interaction. Note that these proportional data are not assumed to be generated by a Bernoulli distribution, but a binomial distribution. Take that into account. Check this tutorial to see how to implement this in `brms`:
+
+https://www.rensvandeschoot.com/tutorials/generalised-linear-models-with-brms/
+
+Extract posterior means and 95% CrIs for the effect of `log_RT_s` for both `group`s and plot them across a representative range of log_RT_s (as done before in this week).
+
+```{r bonusB}
+model2 <- brm(
+  straight_trials | trials(total_trials) ~ mean_log*group, 
+  data, cores = 4,
+  family = "binomial"
+)
+model2
+```
+ 
+```{r bonusB_2}
+# extract posterior means for model coefficients
+predicted_values <- model2 %>%
+  spread_draws(b_Intercept, b_mean_log, b_grouptouch, `b_mean_log:grouptouch`) %>%
+  # make a list of relevant value range of logRT
+  mutate(log_RT = list(seq(-5, 8, 0.2))) %>% 
+  unnest(log_RT) %>%
+  # transform into proportion space using the plogis function
+  mutate(pred_click = plogis(b_Intercept + b_mean_log*log_RT), pred_touch = plogis(b_Intercept + b_mean_log * log_RT + b_grouptouch + `b_mean_log:grouptouch` * log_RT) ) %>%
+  group_by(log_RT) %>%
+  summarise(click_mean = mean(pred_click, na.rm = TRUE),
+            click_low = quantile(pred_click, prob = 0.025),
+            click_high = quantile(pred_click, prob = 0.975), 
+            touch_mean = mean(pred_touch, na.rm = TRUE),
+            touch_low = quantile(pred_touch, prob = 0.025),
+            touch_high = quantile(pred_touch, prob = 0.975)) 
+
+predicted_values
+
+
+
+``` 
+ 
+```{r bonusB_3}
+ 
+ggplot(data = predicted_values) + geom_hline(yintercept = c(0,1), lty = "dashed", color = "grey") +
+  geom_point(data = dolphin_sub,
+             aes(x = log_RT_s, y = straight, color = group), 
+             position = position_jitter(height = 0.02), alpha = 0.2) +
+  geom_ribbon(aes(x = log_RT, ymin = click_low, ymax = click_high), alpha = 0.2) +
+  geom_ribbon(aes(x = log_RT, ymin = touch_low, ymax = touch_high), alpha = 0.2) +
+  geom_line(aes(x = log_RT, y = click_mean), color = "#E69F00", size = 2) +
+  geom_line(aes(x = log_RT, y = touch_mean), color = "#56B4E9", size = 2) +
+  ylab("Predicted prob of straight trajectory") + xlim(-8, 8)
+```
+
+### Bonus (c)
+Now compare the results from this analysis to the results from the model 1b above which you plotted in 1d. How do the model results differ and why could that be? (Feel free to explore the data to understand what is going on)
+
+```{r}
+
+# Answer: The model outpus of 1d and 3b is quite different. The above plot shows the there is a positive increase compared to the decrease in the 2.b model. The prediction here is that the log odd for the click groups mean log RT is 0.89 and for every datapoint change in the mean log RT the lgf odd increases by 0.46. For the touch group the log odd is around 1.63 (0.69 + 0.94) with the log odd keeps increasing by 0.14(with every datapoint.) Which is smaller compared to the click group. The base difference in the click and touch group is the tracetory of the touch group is straighter compared to the click group. 
+
+# The basic model difference is that 2.b is using the bernouli distribution and here we use the binomial distribution. The bernoulli distribution predicts a negative log function which is very flat in nature. with the log odd for click being 0.86 but is smaller by 0.23 with every datapoint. 
+```

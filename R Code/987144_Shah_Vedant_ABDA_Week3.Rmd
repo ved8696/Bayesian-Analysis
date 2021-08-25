@@ -1,0 +1,208 @@
+---
+title: "Simple Regression with brms (Exercise)"
+author: "Vedant Shah 987144"
+date: "04/20/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r libraries, warning=FALSE}
+
+# package for convenience functions (e.g. ggplot2, dplyr, etc.)
+library(tidyverse)
+
+# package for Bayesian regression modeling
+library(brms)
+
+# package for visualization
+library(tidybayes)
+
+# package to visualize 
+library(bayesplot)
+
+# these options help Stan run faster
+options(mc.cores = parallel::detectCores())
+
+#devtools::install_github("michael-franke/aida-package")
+library(aida)
+
+# and our dataset, let's call it dolphin
+dolphin <- aida::aidata
+
+# use the aida-theme for plotting
+theme_set(theme_aida())
+
+# global color scheme / non-optimized
+project_colors = c("#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7", "#000000")
+
+# setting theme colors globally
+scale_colour_discrete <- function(...) {
+  scale_colour_manual(..., values = project_colors)
+}
+scale_fill_discrete <- function(...) {
+   scale_fill_manual(..., values = project_colors)
+} 
+
+
+```
+
+
+
+ 
+
+### HOMEWORK ###
+
+- If you need help, take a look at the suggested readings in the lecture, make use of the Forum, make use of the Forum, and also make use of the Forum.
+
+- Use this exercise Rmd-file, solve the exercises marked as homework (this section here) and save the file with your student number and name in the ‘author’ heading.
+
+- ‘Knit’ the document to produce a HTML file. If knitting fails, make use of the Forum ;)
+
+- Create a ZIP archive called “MATRIKELNR_Lastname_Firstname_ABDA_Week3.zip” containing: 
+- an R Markdown file “MATRIKELNR_Lastname_Firstname_ABDA_Week3.Rmd” and
+- a knitted HTML document “MATRIKELNR_Lastname_Firstname_ABDA_Week3.html”
+	
+- Upload the ZIP archive on Stud.IP in the homework folder before the deadline. You may upload as many times as you like before the deadline, only your final submission will count.
+
+
+## Exercise 2
+
+a) Create a new dataframe that contains only the mean values of the RT, and MAD for each animal (`exemplar`) and for correct and incorrect responses. Print out the `head` of the new dataframe.
+
+```{r exercise2a}
+
+
+df <- dolphin %>% group_by(exemplar, correct) %>% summarise(RT = mean(RT), MAD = mean(MAD)) 
+head(df)
+```
+
+(b) Run a linear regression using brms. `MAD` is the dependent variable (i.e. the measure) and both `RT` and `correct` are independent variables (`MAD ~ RT + correct`). Tip: the coefficients might be really really small, so make sure the output is printed with enought numbers after the comma.
+
+```{r exercise2b, cache = TRUE, warning = FALSE, message = FALSE}
+# specify the model 
+model1 <- brm(
+  # model formula
+  MAD ~ RT + correct,
+  data = df
+  )
+
+
+summary(model1)
+
+```
+
+Try to understand the coefficient table. There is one coefficient for `RT` and one coefficient for `correct` which gives you the change in MAD from incorrect to correct responses.
+
+(c) Plot a scatter plot of MAD ~ RT and color code it for correct responses (Tip: Make sure that `correct` is treated as a factor and not a numeric vector). Draw two predicted lines into the scatterplot. One for correct responses ("lightblue") and one for incorrect responses ("orange").
+
+```{r exercise2c, fig.width = 5, fig.align = "center"}
+
+
+# extract model parameters:
+model_intercept <- summary(model1)$fixed[1]
+model_slope <- summary(model1)$fixed[2]
+model_correct <- summary(model1)$fixed[3]
+
+
+# plot
+df %>% mutate(correct = as.factor(correct)) %>%
+ggplot(aes(x = RT, 
+           y = MAD, color = correct)) + 
+  geom_abline(intercept = model_intercept+model_correct, slope = model_slope, color = "blue", size  = 1) +
+  geom_abline(intercept = model_intercept, slope = model_slope, color = "orange", size  = 1) +
+  geom_point(size = 3, alpha= 0.3) +
+  theme_aida()
+
+```
+
+(d) Extract the posteriors for the coefficients of both `RT` and `correct` from the model output (use the `spread_draws()` function), calculate their means and a 67% Credible Interval. Print out the `head` of the aggregated dataframe.
+
+```{r exercise2d}
+
+
+posteriors1 <- model1 %>%
+  spread_draws(b_RT, b_correct) %>%
+  select(b_RT, b_correct)
+
+
+
+summarize_sample_vector <- function(samples, name = '') {
+    tibble(
+      Parameter = name,
+      '|67%' = HDInterval::hdi(samples, credMass = 0.67)[1],
+      mean  = mean(samples),
+      '67%|' = HDInterval::hdi(samples, credMass = 0.67)[2]
+    )
+}
+
+rbind(
+  summarize_sample_vector(posteriors1$b_RT, "RT"),
+  summarize_sample_vector(posteriors1$b_correct, "Correct")
+)
+```
+
+(e) BONUS I : Plot the scatterplot from 2c and plot 50 sample tuples for the regression lines for correct and incorrect responses.
+
+```{r exercise2e}
+# sample 100 random numbers from 4000 samples
+random_50 <- sample(1:4000, 50, replace = FALSE)
+  
+# wrangle data frame
+correct <- model1 %>%
+  spread_draws(b_RT, b_Intercept, b_correct) %>%
+  select(b_RT, b_Intercept, b_correct) %>%
+  slice(random_50)
+
+
+  
+incorrect <- model1 %>%
+  spread_draws(b_RT, b_Intercept) %>%
+  select(b_RT, b_Intercept) %>%
+  slice(random_50)
+
+# plot
+ggplot(data = df, 
+       aes(x = RT, 
+           y = MAD, color = as.factor(correct))) + 
+  geom_abline(data = correct,
+              aes(intercept = b_Intercept+b_correct, slope = b_RT), 
+              color = "lightblue", size  = 1) +
+  geom_abline(data = incorrect,
+              aes(intercept = b_Intercept, slope = b_RT), 
+              color = "orange", size  = 1) +
+  geom_point(size = 3, alpha = 0.3)+
+  theme_aida()
+
+```
+
+(f) BONUS II: Given our model and our data, calculate the evidential ratio of correct responses exhibiting larger MADs than incorrect responses.
+
+```{r exercise2f}
+posteriors4 <- model1 %>%
+  # use the spread_draws() function of tidybayes for all relevant parameters
+  spread_draws(b_correct) %>%
+  # select only those columns that are relevant
+  select(b_correct) %>% 
+  # bring into long format
+  gather(key = "parameter", value = "posterior")
+
+
+posteriors4_agg <- posteriors4 %>% 
+  group_by(parameter) %>% 
+  summarise(mean_posterior = mean(posterior),
+            `90lowerCrI` = HDInterval::hdi(posterior, credMass = 0.90)[1],
+            `90higherCrI` = HDInterval::hdi(posterior, credMass = 0.90)[2])
+
+
+
+hypothesis(model1, 'correct > -15')
+
+```
+
+
+

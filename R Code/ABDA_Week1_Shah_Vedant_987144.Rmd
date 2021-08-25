@@ -1,0 +1,99 @@
+---
+Auther: "Vedant Shah 987144"
+title: "ABDA_Week1 Vedant Shah 987144"
+output: html_document
+---
+
+
+```{r, warning=FALSE}
+
+library(tidyverse)
+library(ggbeeswarm)
+library(aida)
+
+dolphin <- aida::aidata
+
+```
+
+
+
+### HOMEWORK Data Wrangling###
+
+### Exercise 2 
+
+(a) Take the dolphin data set and store a reduced variant of it. The new data frame should contain only the columns `condition`, `group`, and `xpos_flips`, `correct`. And within the `correct` vector, we are only interested in the correct trials (= 1). Filter accordingly.
+
+```{r x2a}
+  
+dolphin_selected <- dolphin %>%
+  dplyr::select(condition, group, xpos_flips, correct) %>% filter(correct == 1)
+head(dolphin_selected)
+
+```
+
+(b) Create an aggregated data frame that contains the mean `xpos_flips` value and the standard deviation for `group` and `condition`.
+
+```{r x2b}
+dolphin_aggregate <-
+  dolphin_selected %>%
+  group_by(condition, group) %>%
+  summarise(mean_flips = mean(xpos_flips), 
+            sd_flips  = sd(xpos_flips))
+
+dolphin_aggregate
+```
+
+(c) Rename the new vectors for the mean xflips and their sd to `xflips_mean` and `xflips_sd`
+
+```{r}
+dolphin_aggregate <- dolphin_aggregate %>% rename(xflips_mean = mean_flips, xflips_sd = sd_flips)
+dolphin_aggregate
+```
+
+(d) Do all of the above (a-c) in one pipeline.
+
+```{r}
+dolphin_pipeline <- dolphin %>%
+  dplyr::select(condition, group, xpos_flips, correct) %>% filter(correct == 1) %>%
+group_by(condition, group) %>%
+  summarise(mean_flips = mean(xpos_flips), 
+            sd_flips  = sd(xpos_flips)) %>% rename(xflips_mean = mean_flips, xflips_sd = sd_flips)
+  
+dolphin_pipeline
+
+```
+
+### HOMEWORK Data Viz ###
+
+## Exercise 2
+
+a) Plot AUC values as a function of group in a density plot (`geom_density`).
+
+b) Color code the curves (the border and the filling) as follows: "orange" for the click group and "black" for the touch group.
+
+c) Make the density curves semi-transparent with the `alpha` argument
+
+d) Add the aida_theme to the plot.
+
+e) BONUS: Add the mean values for both groups into the density plot as a line.
+
+```{r x2}
+
+
+mean <- dolphin %>% group_by(group) %>% summarise(mean = mean(AUC))
+
+ggplot(dolphin, aes(x= AUC, fill = group, color = group)) +
+  geom_density(alpha = 0.5) +
+  ggtitle("a density plot") +
+  scale_fill_manual(
+                    guide = guide_legend("Group"),
+                    values = c("orange", "black")) +
+    scale_colour_manual(
+                    guide = guide_legend("Group"),
+                    values = c("orange", "black")) +
+  geom_vline(data = mean, aes(xintercept = mean, color = group))+
+  theme_aida()
+
+```
+
+
